@@ -15,8 +15,6 @@ namespace Net{
     {
         public NetworkDriver.Concurrent driver;
         public NativeArray<NetworkConnection> connections;
-        public NativeArray<ClientHeader> clientHeader;
-        public NativeArray<InputMessage> inMessage;
 
 
         public void Execute(int index)
@@ -29,8 +27,6 @@ namespace Net{
             {
                 if (cmd == NetworkEvent.Type.Data)
                 {
-                    clientHeader[index].Deserialize(ref stream);
-                    inMessage[index].Deserialize(ref stream);
                     Debug.Log("Client sended data");
                 }
                 else if (cmd == NetworkEvent.Type.Disconnect)
@@ -43,12 +39,10 @@ namespace Net{
     }
     public class Server : MonoBehaviour
     {
-        public int clientCount=4;
+        public int clientCount=1;
         public NetworkDriver m_Driver;
         private NativeList<NetworkConnection> m_Connections;
         private JobHandle ServerJobHandle;
-        NativeArray<InputMessage> inMessage;
-        NativeArray<ClientHeader> clientHeader;
         // Start is called before the first frame update
         void Start ()
         {
@@ -69,8 +63,6 @@ namespace Net{
             else
                 m_Driver.Listen();
 
-            clientHeader=new NativeArray<ClientHeader>(clientCount,Allocator.Persistent);
-            inMessage=new NativeArray<InputMessage>(clientCount,Allocator.Persistent);
         }
         public void OnDestroy()
         {
@@ -80,8 +72,6 @@ namespace Net{
                 ServerJobHandle.Complete();
                 m_Connections.Dispose();
                 m_Driver.Dispose();
-                clientHeader.Dispose();
-                inMessage.Dispose();
             }
         }
 
@@ -99,8 +89,6 @@ namespace Net{
             {
                 driver = m_Driver.ToConcurrent(),
                 connections = m_Connections.AsDeferredJobArray(),
-                clientHeader=clientHeader,
-                inMessage=inMessage,
             };
 
             ServerJobHandle = m_Driver.ScheduleUpdate();

@@ -4,12 +4,12 @@ using UnityEngine;
 
 public class AiInjector : MonoBehaviour
 {
-    Controller controller;
+    ControllerClient controller;
     public Transform target;
 
     void Start()
     {
-        controller=GetComponent<Controller>();
+        controller=GetComponent<ControllerClient>();
     }
     void getAi()
     {
@@ -18,14 +18,14 @@ public class AiInjector : MonoBehaviour
         float dotR=Vector3.Dot(transform.right,dirToMove);
 
         if(dotF>0)
-            controller.inputData.y=1;
+            controller.inputData.input.y=1;
         else
-            controller.inputData.y=-1;
+            controller.inputData.input.y=-1;
 
         if(dotR>0)
-            controller.inputData.x=1;
+            controller.inputData.input.x=1;
         else
-            controller.inputData.x=-1;
+            controller.inputData.input.x=-1;
     }
     void Update()
     {

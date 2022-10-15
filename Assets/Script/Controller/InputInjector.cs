@@ -6,15 +6,14 @@ public class InputInjector : MonoBehaviour
 {
     // Start is called before the first frame update
     public Joystick joystick;
-    Controller controller;
+    ControllerClient controller;
 
     Vector2 savedSkew = Vector2.zero;
     float skew;
     
-
     public void Start()
     {
-        controller=GetComponent<Controller>();
+        controller=GetComponent<ControllerClient>();
         skew=0;
     }
     public void getInput()
@@ -30,7 +29,7 @@ public class InputInjector : MonoBehaviour
     void Update()
     {
         getInput();
-        controller.inputData.y=joystick.v;
-        controller.inputData.x=skew;
+        controller.inputData.input.y=joystick.v;
+        controller.inputData.input.x=skew;
     }
 }

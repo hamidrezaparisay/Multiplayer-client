@@ -11,22 +11,27 @@ namespace Net{
     [BurstCompile]
     struct ClientSendJob : IJob
     {
-        public InputMessage input;
+        public NativeArray<InputMessage> input;
         public NetworkDriver driver;
         public NativeArray<NetworkConnection> connection;
-        public ClientHeader header;
+        public Header header;
         public void Execute()
         {
             DataStreamWriter writer;
             driver.BeginSend(connection[0],out writer);
-            input.Serialize(ref writer,header);
+            header.Serialize(ref writer);
+            for(int i=0;i<input.Length;i++)
+                input[i].Serialize(ref writer);
             driver.EndSend(writer);
         }
     }
+    // [BurstCompile]
     struct ClientUpdateJob : IJob
     {
         public NetworkDriver driver;
         public NativeArray<NetworkConnection> connection;
+        public NativeArray<Header> lastHeader;
+        public NativeArray<SnapShot> lastSnapShot;
 
         public void Execute()
         {
@@ -44,8 +49,14 @@ namespace Net{
                 }
                 else if (cmd == NetworkEvent.Type.Data)
                 {
-                    Debug.Log("Got the data back from the server");
-                    
+                    Header temp=new Header(0);
+                    temp.Deserialize(ref stream);
+                    if(lastHeader[0].frame<temp.frame || lastHeader[0].frame-temp.frame>20)
+                    {
+                        lastHeader[0]=temp;
+                        lastSnapShot[0].Deserialize(ref stream);
+                    }
+                    Debug.Log("Got a snapShot from the server");
                 }
                 else if (cmd == NetworkEvent.Type.Disconnect)
                 {
@@ -55,16 +66,36 @@ namespace Net{
             }
         }
     }
-    public class Client : MonoBehaviour
+    public class ClientSocket : MonoBehaviour
     {
-        public NetworkDriver m_Driver;
-        public NativeArray<NetworkConnection> m_Connection;
-        public JobHandle ClientJobHandle;
-        ClientHeader clientHeader;
-        InputMessage inMessage;
-        // Start is called before the first frame update
+        static NetworkDriver m_Driver;
+        static NativeArray<NetworkConnection> m_Connection;
+        JobHandle ClientJobHandle;
+        static JobHandle SendHandle;
+
+        public static NativeArray<Header> lastHeader;
+        public static NativeArray<SnapShot> lastSnapShot;
+
+
+        public static void Send(NativeArray<InputMessage> inputs)
+        {
+            var job = new ClientSendJob{
+                input=inputs,
+                driver=m_Driver,
+                connection=m_Connection,
+                header=new Header(NetBufferClient.tick)
+            };
+            SendHandle = job.Schedule(SendHandle);
+        }
         void Start ()
         {
+            lastHeader=new NativeArray<Header>(1,Allocator.Persistent);
+            Header temp;
+            temp.frame=-1;
+            lastHeader[0]=temp;
+            lastSnapShot=new NativeArray<SnapShot>(1,Allocator.Persistent);
+
+            NetBufferClient.start();
             // var settings = new NetworkSettings(); 
             // settings.WithNetworkConfigParameters();
             // settings.WithSecureClientParameters()
@@ -78,11 +109,10 @@ namespace Net{
 
             m_Connection[0] = m_Driver.Connect(endpoint);
 
-            clientHeader=new ClientHeader(0,0,0);
-            inMessage=new InputMessage(new float2());
         }
-        public void OnDestroy()
+        void OnDestroy()
         {
+            NetBufferClient.exit();
             // Make sure we run our jobs to completion before exiting.
             ClientJobHandle.Complete();
 
@@ -90,6 +120,8 @@ namespace Net{
             {
                 m_Connection.Dispose();
                 m_Driver.Dispose();
+                lastHeader.Dispose();
+                lastSnapShot.Dispose();
             }
         }
 
@@ -97,14 +129,24 @@ namespace Net{
         void Update()
         {
             ClientJobHandle.Complete();
+            if(NetBufferClient.lastHeader.frame!=lastHeader[0].frame)
+            {
+                NetBufferClient.lastHeader=lastHeader[0];
+                NetBufferClient.lastSnapShot=lastSnapShot[0];
+                NetBufferClient.doneProcessingLast=false;
+            }
+            
             var job = new ClientUpdateJob
             {
                 driver = m_Driver,
                 connection = m_Connection,
+                lastHeader=lastHeader,
+                lastSnapShot=lastSnapShot,
             };
             //call send input also
             ClientJobHandle = m_Driver.ScheduleUpdate();
             ClientJobHandle = job.Schedule(ClientJobHandle);
+            SendHandle.Complete();   
         }
         
     }
