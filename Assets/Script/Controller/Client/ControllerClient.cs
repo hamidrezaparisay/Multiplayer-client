@@ -16,7 +16,7 @@ public class ControllerClient : MonoBehaviour
     public float springDamp=10;
     public float maxSpeed=100;
     public float maxAngle=20;
-    public AnimationCurve powerCurve;
+    [System.NonSerialized]public AnimationCurve powerCurve;
     public float tireGripFactor=0.3f;
 
     float accelInput;
@@ -33,7 +33,9 @@ public class ControllerClient : MonoBehaviour
     NativeArray<InputMessage> inputBuffer;
     void Start()
     {
+        timer=0;
         client_pos_error=float3.zero;
+        client_rot_error=quaternion.identity;
         carRB=GetComponent<Rigidbody>();
         tires=new Transform[4];
         tires[0]=transform.GetChild(0);
@@ -41,59 +43,78 @@ public class ControllerClient : MonoBehaviour
         tires[2]=transform.GetChild(2);
         tires[3]=transform.GetChild(3);
 
+        Keyframe[] keyframes=new Keyframe[2];
+        keyframes[0]=new Keyframe(0,1,0,0,0,0.3333333f);
+        keyframes[1]=new Keyframe(1,1,0,0,0.3333333f,0);
+        powerCurve=new AnimationCurve(keyframes);
+
         timer=0;
     }
 
     void Update()
     {
+        if(ClientSocket.cond!=ClientCondition.GameLoop)
+            return;
         timer += Time.deltaTime;
         while (timer >= Time.fixedDeltaTime)
         {
             timer -= Time.fixedDeltaTime;
-
-            int buffer_slot=NetBufferClient.tick%NetBufferClient.buuferSize;
-            NetBufferClient.saveInputAndState(inputData,new State(carRB.position,carRB.rotation),buffer_slot);
+            inputData.frame=NetBufferClient.tick;
+            
+            int buffer_slot=NetBufferClient.tick%NetBufferClient.bufferSize;
             NetBufferClient.saveInputSend(inputData);
 
-            ClientSocket.Send(NetBufferClient.inputSend);          
+            ClientSocket.SendInput();
 
             this.AddForces(inputData);
             Physics.Simulate(Time.fixedDeltaTime);
+            NetBufferClient.saveInputAndState(inputData,new State(carRB.position,carRB.rotation),buffer_slot);
 
-            this.correct();
-            this.smooth();
-            
             NetBufferClient.tick++;
+            if(NetBufferClient.tick==1024)
+                NetBufferClient.tick=0;
         }
+        if(!NetBufferClient.doneProcessingLast[0])
+            this.correct();
+        this.smooth();
+            
+        carRB.transform.position=(float3)carRB.position+client_pos_error;
+        carRB.transform.rotation=math.normalize(math.mul(carRB.rotation,client_rot_error));
     }
     void correct()
     {
-        if(NetBufferClient.doneProcessingLast)
-            return;
-        SnapShot s=NetBufferClient.lastSnapShot;
-        Header h=NetBufferClient.lastHeader;
-        int buffer_slot= h.frame % NetBufferClient.buuferSize;
+        SnapShot s=NetBufferClient.lastSnapShot[0];
+        Header h=NetBufferClient.lastHeader[0];
+        State state=NetBufferClient.snapShotData[NetBufferClient.selfIndex];
+        int buffer_slot= h.frame % NetBufferClient.bufferSize;
         State buffer=NetBufferClient.stateBuffer[buffer_slot];
 
-        float3 position_error=s.state.position-buffer.position;
-        float rotation_error=1.0f-math.dot(s.state.rotation,buffer.rotation);
-
-        if(math.lengthsq(position_error) > 0.0000001f || rotation_error > 0.00001f)
+        float3 position_error=state.position-buffer.position;
+        float rotation_error=1.0f-math.dot(state.rotation,buffer.rotation);
+        if(position_error.x > 0.01f || position_error.y>0.1 || position_error.z>0.01f || rotation_error > 0.0001f )//
         {
-            Debug.Log("Correcting at tick "+h.frame+"(rewinding "+(NetBufferClient.tick-h.frame)+"ticks)");
-            float3 prev_pos=(float3)carRB.position - client_pos_error;
-            quaternion prev_rot=math.mul(carRB.rotation,client_rot_error);
+            // Debug.Log("Correcting at tick "+h.frame+"(rewinding "+(NetBufferClient.tick-h.frame)+"ticks)");
+            string a="";
+            if(position_error.x > 0.0001f)
+                a+="x";
+            if(position_error.y > 0.1f)
+                a+="y";
+            if(position_error.z > 0.0001f)
+                a+="z";
+            Debug.Log("correcting bcz of "+a);
 
-            carRB.position=s.state.position;
-            carRB.rotation=s.state.rotation;
+            float3 prev_pos=(float3)carRB.position + client_pos_error;
+            quaternion prev_rot=math.mul(carRB.rotation,client_rot_error);
+            carRB.position=state.position;
+            carRB.rotation=math.normalize(state.rotation);
             carRB.velocity=s.rbState.vol;
             carRB.angularVelocity=s.rbState.angularVol;
 
             int rewind_tick_number=h.frame;
             while(rewind_tick_number<NetBufferClient.tick)
             {
-                buffer_slot= rewind_tick_number % NetBufferClient.buuferSize;
-                NetBufferClient.saveState(s.state,rewind_tick_number);
+                buffer_slot= rewind_tick_number % NetBufferClient.bufferSize;
+                NetBufferClient.saveState(new State(carRB.position,carRB.rotation),rewind_tick_number);
                 this.AddForces(NetBufferClient.inputBuffer[buffer_slot]);
                 Physics.Simulate(Time.fixedDeltaTime);
                 rewind_tick_number++;
@@ -109,14 +130,17 @@ public class ControllerClient : MonoBehaviour
                 client_rot_error=math.mul(math.inverse(carRB.rotation),prev_rot);
             }
         }
+        NetBufferClient.doneProcessingLast[0]=true;
     }
     void smooth()
     {
-        client_pos_error*=0.9f;
-        client_rot_error=math.slerp(client_rot_error,quaternion.identity,0.1f);
+        // client_pos_error*=0.9f;
+        // client_rot_error=math.slerp(client_rot_error,quaternion.identity,0.1f);
+        
+        client_pos_error=float3.zero;
+        client_rot_error=quaternion.identity;
 
-        carRB.position=(float3)carRB.position+client_pos_error;
-        carRB.rotation=math.mul(carRB.rotation,client_rot_error);
+        
     }
     void AddForces(InputMessage mInput)
     {

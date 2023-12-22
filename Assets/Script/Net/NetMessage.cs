@@ -4,21 +4,26 @@ using UnityEngine;
 using Unity.Networking.Transport;
 using Unity.Mathematics;
 
+
 namespace Net
 {
     public struct Header
     {
+        public byte OpCode;//max=4      0=Auth,1=Init,2=Loop
         public int frame;//max=1024
-        public Header(int frame)
+        public Header(int frame,byte OpCode)
         {
             this.frame=frame;
+            this.OpCode=OpCode;
         }
         public void Serialize(ref DataStreamWriter writer)
         {
+            writer.WriteRawBits((uint)OpCode,2);
             writer.WriteRawBits((uint)frame,10);
         }
         public void Deserialize(ref DataStreamReader reader)
         {
+            this.OpCode=(byte)reader.ReadRawBits(2);
             this.frame=(int)reader.ReadRawBits(10);
         }
     }
@@ -26,9 +31,11 @@ namespace Net
     //client sends&serever recives
     public struct InputMessage
     {
+        public int frame;
         public float2 input;
-        public InputMessage(float2 input)
+        public InputMessage(int frame,float2 input)
         {
+            this.frame=frame;
             this.input=input;
         }
         public void Serialize(ref DataStreamWriter writer)
@@ -38,7 +45,6 @@ namespace Net
         }
         public void Deserialize(ref DataStreamReader reader)//reader have been readed header
         {
-            float2 input;
             input.x=reader.ReadFloat();
             input.y=reader.ReadFloat();
         }
@@ -127,27 +133,38 @@ namespace Net
     public struct SnapShot
     {
         public rigidBodyState rbState;
-        public State state;
-        public NativeArray<ServerState> entityStates;
-        public SnapShot(rigidBodyState rbState,State state, NativeArray<ServerState> entityStates)
+        public SnapShot(rigidBodyState rbState )
         {
             this.rbState=rbState;
-            this.state=state;
-            this.entityStates=entityStates;
         }
-        public void Serialize(ref DataStreamWriter writer)
+        public void Serialize(ref DataStreamWriter writer, NativeArray<State> data)
         {
             rbState.Serialize(ref writer);
-            state.Serialize(ref writer);
-            for(int i=0;i<entityStates.Length;i++)
-                entityStates[i].Serialize(ref writer);
+            for(int i=0;i<data.Length;i++)
+            {
+                data[i].Serialize(ref writer);
+            }
         }
-        public void Deserialize(ref DataStreamReader reader)
+        public void Deserialize(ref DataStreamReader reader,NativeArray<State> data)
         {
             rbState.Deserialize(ref reader);
-            state.Deserialize(ref reader);
-            for(int i=0;i<entityStates.Length;i++)
-                entityStates[i].Deserialize(ref reader);
+            State temp=new State();
+            for(int i=0;i<data.Length;i++)
+            {
+                temp.Deserialize(ref reader);
+                data[i]=temp;
+            }
+        }
+    }
+
+    public struct ServerInputMessage
+    {
+        public InputMessage input;
+        public int clientId;
+        public ServerInputMessage(InputMessage input,int clientId)
+        {
+            this.input=input;
+            this.clientId=clientId;
         }
     }
 }
